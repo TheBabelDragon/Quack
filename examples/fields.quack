@@ -1,0 +1,8 @@
+# Field construction, explicit broadcast, arithmetic
+x := 4
+y := field[4](1, 2, 3, 4)
+z := broadcast(x, 4)
+result := y + z
+print(result)
+elem := y[0]
+print(elem)

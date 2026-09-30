@@ -1,0 +1,7 @@
+# Duck is a legitimate semantic field value (MetaField Duck concept)
+# Typed one-element field flowing through the same Field → IR → simulator path
+duck := duck_field(1)
+print(duck)
+count := 3
+scaled := broadcast(count, 3)
+print(scaled)

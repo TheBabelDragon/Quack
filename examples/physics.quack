@@ -1,0 +1,6 @@
+# Units participate in typing
+v : Voltage := 12
+r : Resistance := 4
+# Ohm's law: I = V / R  → Current
+i := v / r
+print(i)

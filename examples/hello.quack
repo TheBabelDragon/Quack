@@ -1,0 +1,5 @@
+# Hello Quack — scalars are fields
+x := 4
+y := 2
+sum := x + y
+print(sum)
