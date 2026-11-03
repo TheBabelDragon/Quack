@@ -144,11 +144,13 @@ class Parser:
         expr = self._parse_primary()
         while self._at(TokenKind.LBRACK):
             tok = self._eat(TokenKind.LBRACK)
-            index = self.parse_expr()
+            indices: List[Expr] = [self.parse_expr()]
+            while self._match(TokenKind.COMMA):
+                indices.append(self.parse_expr())
             self._eat(TokenKind.RBRACK)
             expr = Index(
                 expr,
-                index,
+                indices,
                 location=SourceLocation(tok.line, tok.column, self.filename),
             )
         return expr
