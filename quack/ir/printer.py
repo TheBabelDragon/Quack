@@ -50,7 +50,8 @@ def _expr(e: IRExpr) -> str:
     if isinstance(e, IRUnary):
         return f"({e.op}{_expr(e.operand)})"
     if isinstance(e, IRIndex):
-        return f"{_expr(e.target)}[{_expr(e.index)}]"
+        idxs = ", ".join(_expr(ix) for ix in e.indices)
+        return f"{_expr(e.target)}[{idxs}]"
     if isinstance(e, IRDuckConstruct):
         return f"duck_field({_expr(e.value)})"
     return f"<?{type(e).__name__}>"

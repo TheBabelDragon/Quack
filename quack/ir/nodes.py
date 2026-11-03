@@ -78,8 +78,14 @@ class IRBroadcast(IRExpr):
 
 @dataclass
 class IRIndex(IRExpr):
+    """Index into a field. indices is a non-empty list of scalar IRExprs.
+
+    Result is always a scalar field. For rank-N targets, multi-index
+    coordinates are converted via the formal row-major layout contract.
+    A single linear index is also accepted for any rank (flattened access).
+    """
     target: IRExpr
-    index: IRExpr
+    indices: List[IRExpr]
 
 
 @dataclass
