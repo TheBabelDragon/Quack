@@ -1,12 +1,13 @@
 """
-Deterministic Field IR simulator.
+Deterministic Field IR simulator (rank-N).
 
 Uses plain Python lists — no NumPy required — so the semantic model stays obvious.
+Layout is contiguous row-major; multi-index access follows the formal shape contract.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ..diagnostics import QuackError
 from ..fields import Field
@@ -24,6 +25,7 @@ from ..ir.nodes import (
     IRRef,
     IRUnary,
 )
+from ..shape import is_scalar, offset
 from ..types import ElementType, FieldType
 from ..units import Dimensionless
 
@@ -53,22 +55,28 @@ class Simulator:
 
     def _eval(self, expr: IRExpr) -> Field:
         if isinstance(expr, IRConstant):
-            return Field.scalar(expr.value, element=expr.field_type.element, unit=expr.field_type.unit)
+            return Field.scalar(
+                expr.value,
+                element=expr.field_type.element,
+                unit=expr.field_type.unit,
+            )
         if isinstance(expr, IRRef):
             if expr.name not in self.env:
                 raise QuackError(f"undefined name '{expr.name}' at runtime")
             return self.env[expr.name]
         if isinstance(expr, IRFieldConstruct):
-            values = []
+            flat: List[Any] = []
             for e in expr.elements:
                 f = self._eval(e)
-                values.append(f.data[0] if f.field_type.shape in ((), (1,)) else f.data)
-            flat: List[Any] = []
-            for v in values:
-                if isinstance(v, list):
-                    flat.extend(v)
+                if is_scalar(f.shape):
+                    flat.append(f.data[0])
                 else:
-                    flat.append(v)
+                    flat.extend(f.data)
+            if len(flat) != expr.field_type.size:
+                raise QuackError(
+                    f"runtime construct size mismatch: got {len(flat)}, "
+                    f"expected {expr.field_type.size} for shape {expr.shape}"
+                )
             return Field.from_values(
                 flat,
                 expr.shape,
@@ -77,6 +85,10 @@ class Simulator:
             )
         if isinstance(expr, IRBroadcast):
             src = self._eval(expr.value)
+            if not is_scalar(src.shape):
+                raise QuackError(
+                    f"runtime broadcast requires scalar, got shape {src.shape}"
+                )
             v = src.data[0]
             return Field.from_values(
                 [v] * expr.size,
@@ -95,22 +107,47 @@ class Simulator:
                 return Field(data, expr.field_type, operand.topology)
             raise QuackError(f"unsupported unary op {expr.op}")
         if isinstance(expr, IRIndex):
-            target = self._eval(expr.target)
-            idx_f = self._eval(expr.index)
-            idx = int(idx_f.data[0])
-            val = target.get(idx)
-            return Field.scalar(val, element=expr.field_type.element, unit=expr.field_type.unit)
+            return self._index(expr)
         if isinstance(expr, IRDuckConstruct):
             inner = self._eval(expr.value)
-            return Field.scalar(inner.data[0], element=ElementType.DUCK, unit=Dimensionless)
+            return Field.scalar(
+                inner.data[0], element=ElementType.DUCK, unit=Dimensionless
+            )
         raise QuackError(f"unsupported IR expr {type(expr).__name__}")
 
-    def _bin_op(self, op: str, left: Field, right: Field, result_type: FieldType) -> Field:
+    def _index(self, expr: IRIndex) -> Field:
+        target = self._eval(expr.target)
+        coords: List[int] = []
+        for ix_expr in expr.indices:
+            ix_f = self._eval(ix_expr)
+            if not is_scalar(ix_f.shape):
+                raise QuackError("runtime index coordinate must be scalar")
+            coords.append(int(ix_f.data[0]))
+
+        if len(coords) == 1:
+            val = target.get(coords[0])
+        else:
+            if len(coords) != target.rank:
+                raise QuackError(
+                    f"runtime index rank {len(coords)} != field rank {target.rank}"
+                )
+            val = target.get_at(*coords)
+        return Field.scalar(
+            val, element=expr.field_type.element, unit=expr.field_type.unit
+        )
+
+    def _bin_op(
+        self, op: str, left: Field, right: Field, result_type: FieldType
+    ) -> Field:
+        if left.shape != right.shape:
+            raise QuackError(
+                f"runtime shape mismatch: {left.shape} vs {right.shape}"
+            )
         if len(left.data) != len(right.data):
             raise QuackError(
-                f"runtime shape mismatch: {len(left.data)} vs {len(right.data)}"
+                f"runtime storage length mismatch: {len(left.data)} vs {len(right.data)}"
             )
-        out = []
+        out: List[Any] = []
         for a, b in zip(left.data, right.data):
             if op == "+":
                 out.append(a + b)
