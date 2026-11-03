@@ -81,8 +81,14 @@ class DuckField(Expr):
 
 @dataclass
 class Index(Expr):
+    """Field indexing. indices is a non-empty list of scalar expressions.
+
+    Single-index form f[i] and multi-index form f[i, j, ...] are both
+    represented. Rank of indices must match the target field rank at
+    semantic analysis (or be linear for rank-1 / flattened access).
+    """
     target: Expr
-    index: Expr
+    indices: List[Expr]
 
 
 @dataclass

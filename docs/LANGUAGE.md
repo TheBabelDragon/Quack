@@ -1,29 +1,24 @@
-# Quack Language (v0.1)
-
-## Syntax overview
-
-```
-# comment
-name := expression
-name : Unit := expression
-print(expression)
-```
-
-Programs are sequences of statements. There is no separate expression statement form beyond assignment and print.
+# Quack Language (v0.2)
 
 ## Expressions
 
 | Form | Meaning |
 |------|---------|
 | `42` / `3.14` | Scalar field (shape `()`) |
-| `name` | Reference to a previously bound field |
-| `a + b` / `-` / `*` / `/` | Element-wise arithmetic; shapes must match |
-| `field[N](e1, …, eN)` | Construct 1-D field of shape `(N,)` |
+| `field[N](e1, …, eN)` | 1-D field of shape `(N,)` |
+| `field[R,C](…)` / `field[D1,…,Dn](…)` | Rank-N field (row-major) |
 | `broadcast(x, N)` | Explicit scalar → length-N field |
-| `duck_field(v)` | Typed one-element Duck field |
-| `f[i]` | Index; result is a scalar field |
+| `f[i]` / `f[i,j,…]` | Linear or multi-index (result is scalar) |
 
-Unary minus is supported: `-x`.
+## Rank-N construction and indexing
+
+```
+m := field[2,3](1, 2, 3, 4, 5, 6)   # shape (2, 3), row-major
+a := m[1, 2]                         # multi-index → 6
+b := m[5]                            # linear index → 6
+```
+
+Invalid dimensions, element-count mismatches, out-of-bounds constant indices, and rank mismatches on multi-index produce diagnostics with source locations.
 
 ## No silent broadcasting
 
@@ -33,26 +28,3 @@ x := 4
 # r := y + x   # ERROR — shapes () and (4,) differ
 r := y + broadcast(x, 4)   # OK
 ```
-
-## Units
-
-```
-v : Voltage := 12
-r : Resistance := 4
-i := v / r          # result unit is Current
-# bad := v + mass   # ERROR: incompatible dimensions
-```
-
-Unit annotations are checked at semantic analysis. Arithmetic operators respect dimensional rules for the small fixed set of units shipped in v0.1.
-
-## Duck
-
-```
-duck := duck_field(1)
-```
-
-Produces a one-element field with element type `duck`. This is the same shared semantic concept as MetaField's Duck — a legitimate field value that flows through AST → IR → simulator like every other field.
-
-## Determinism
-
-Execution is deterministic. The simulator uses plain Python data structures; given the same source, the same Field IR and the same outputs are produced.

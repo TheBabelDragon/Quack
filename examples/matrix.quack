@@ -1,0 +1,16 @@
+# Rank-N fields: 2×3 matrix, multi-index and linear access
+m := field[2,3](10, 20, 30, 40, 50, 60)
+print(m)
+
+# Multi-index (row, col)
+print(m[0, 0])
+print(m[1, 2])
+
+# Linear (flattened row-major)
+print(m[5])
+
+# Same-shape arithmetic
+n := field[2,3](1, 1, 1, 1, 1, 1)
+s := m + n
+print(s)
+print(s[1, 1])

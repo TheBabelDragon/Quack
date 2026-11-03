@@ -1,11 +1,20 @@
-"""Element and field types for Quack."""
+"""Element and field types for Quack — rank-N aware."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Tuple
 
+from .shape import (
+    Shape,
+    format_shape,
+    is_scalar as shape_is_scalar,
+    rank as shape_rank,
+    size as shape_size,
+    strides as shape_strides,
+    validate_shape,
+)
 from .units import Unit, Dimensionless
 
 
@@ -20,40 +29,54 @@ class FieldType:
     """
     Complete type of a Field value.
 
-    shape: tuple of positive ints; () means scalar (one-element field)
+    shape: () for scalar; (D1, ..., Dn) for rank-N. All Di >= 1.
     element: numeric or duck
     unit: dimensional annotation (default dimensionless)
+
+    Invariants:
+      - shape is validated at construction
+      - size == product of dimensions (1 for scalar)
+      - scalar is strictly shape == ()
+      - (1,) is a one-element vector, distinct from scalar
     """
 
     element: ElementType
-    shape: Tuple[int, ...]
+    shape: Shape
     unit: Unit = Dimensionless
+
+    def __post_init__(self) -> None:
+        # frozen dataclass: validate shape
+        validated = validate_shape(self.shape)
+        if validated != self.shape:
+            object.__setattr__(self, "shape", validated)
 
     @property
     def rank(self) -> int:
-        return len(self.shape)
+        return shape_rank(self.shape)
 
     @property
     def size(self) -> int:
-        n = 1
-        for d in self.shape:
-            n *= d
-        return n
+        return shape_size(self.shape)
 
     @property
     def is_scalar(self) -> bool:
-        return self.shape == () or self.shape == (1,)
+        """True only for shape (). (1,) is a vector of length 1."""
+        return shape_is_scalar(self.shape)
 
-    def with_shape(self, shape: Tuple[int, ...]) -> "FieldType":
-        return FieldType(self.element, shape, self.unit)
+    @property
+    def strides(self) -> Tuple[int, ...]:
+        return shape_strides(self.shape)
+
+    def with_shape(self, shape: Shape) -> "FieldType":
+        return FieldType(self.element, validate_shape(shape), self.unit)
 
     def with_unit(self, unit: Unit) -> "FieldType":
         return FieldType(self.element, self.shape, unit)
 
+    def with_element(self, element: ElementType) -> "FieldType":
+        return FieldType(element, self.shape, self.unit)
+
     def __str__(self) -> str:
-        if self.shape == ():
-            shape_s = "()"
-        else:
-            shape_s = str(self.shape)
+        shape_s = format_shape(self.shape)
         unit_s = f" : {self.unit.name}" if self.unit is not Dimensionless else ""
         return f"Field[{self.element.value}, {shape_s}]{unit_s}"

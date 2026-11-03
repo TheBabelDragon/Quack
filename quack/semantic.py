@@ -153,16 +153,22 @@ class SemanticAnalyzer:
         return IRBinary(expr.op, left, right, field_type=result_type, location=expr.location)
 
     def _field_construct(self, expr: A.FieldConstruct) -> IRFieldConstruct:
-        shape = tuple(expr.dims)
+        raw_dims = list(expr.dims)
+        valid = True
         expected = 1
-        for d in shape:
+        for d in raw_dims:
             if d < 1:
                 self.diagnostics.error(f"invalid dimension {d}", expr.location)
-            expected *= d
+                valid = False
+            else:
+                expected *= d
+        shape = tuple(raw_dims) if valid and raw_dims else (1,)
+        if valid and not raw_dims:
+            shape = ()
         elements = [self._expr(e) for e in expr.elements]
-        if len(elements) != expected:
+        if valid and len(elements) != expected:
             self.diagnostics.error(
-                f"field[{','.join(map(str, shape))}] expects {expected} elements, got {len(elements)}",
+                f"field[{','.join(map(str, raw_dims))}] expects {expected} elements, got {len(elements)}",
                 expr.location,
             )
         element = ElementType.INT
@@ -177,17 +183,17 @@ class SemanticAnalyzer:
                         f"mixed units in field constructor: {unit.name} vs {e.field_type.unit.name}",
                         expr.location,
                     )
-        ft = FieldType(element, shape, unit)
-        return IRFieldConstruct(elements, shape, field_type=ft, location=expr.location)
+        ft = FieldType(element, shape if valid else (1,), unit)
+        return IRFieldConstruct(elements, shape if valid else (1,), field_type=ft, location=expr.location)
 
     def _broadcast(self, expr: A.Broadcast) -> IRBroadcast:
         value = self._expr(expr.value)
         if expr.size < 1:
             self.diagnostics.error(f"broadcast size must be >= 1, got {expr.size}", expr.location)
         src_shape = value.field_type.shape
-        if src_shape not in ((), (1,)):
+        if src_shape != ():
             self.diagnostics.error(
-                f"broadcast requires a scalar field, got shape {src_shape}",
+                f"broadcast requires a scalar field (shape ()), got shape {src_shape}",
                 expr.location,
             )
         new_shape = (expr.size,)
@@ -201,18 +207,41 @@ class SemanticAnalyzer:
 
     def _index(self, expr: A.Index) -> IRIndex:
         target = self._expr(expr.target)
-        index = self._expr(expr.index)
-        if index.field_type.shape not in ((), (1,)):
-            self.diagnostics.error("index must be a scalar", expr.location)
-        if isinstance(index, IRConstant) and isinstance(index.value, int):
-            size = target.field_type.size if target.field_type.shape != () else 1
-            if index.value < 0 or index.value >= size:
-                self.diagnostics.error(
-                    f"index {index.value} out of range for shape {target.field_type.shape}",
-                    expr.location,
-                )
+        indices_ir = [self._expr(ix) for ix in expr.indices]
+        target_shape = target.field_type.shape
+        target_rank = len(target_shape)
+
+        for ix in indices_ir:
+            if ix.field_type.shape != ():
+                self.diagnostics.error("each index coordinate must be a scalar", expr.location)
+
+        if len(indices_ir) == 1:
+            ix = indices_ir[0]
+            if isinstance(ix, IRConstant) and isinstance(ix.value, int):
+                n = target.field_type.size
+                if ix.value < 0 or ix.value >= n:
+                    self.diagnostics.error(
+                        f"index {ix.value} out of range for shape {target_shape} (size {n})",
+                        expr.location,
+                    )
+        elif len(indices_ir) == target_rank and target_rank > 0:
+            for dim, ix in zip(target_shape, indices_ir):
+                if isinstance(ix, IRConstant) and isinstance(ix.value, int):
+                    if ix.value < 0 or ix.value >= dim:
+                        self.diagnostics.error(
+                            f"coordinate {ix.value} out of bounds for dimension size {dim} "
+                            f"in shape {target_shape}",
+                            expr.location,
+                        )
+        else:
+            self.diagnostics.error(
+                f"index rank {len(indices_ir)} does not match field rank {target_rank} "
+                f"(use {target_rank} coordinates or a single linear index)",
+                expr.location,
+            )
+
         ft = FieldType(target.field_type.element, (), target.field_type.unit)
-        return IRIndex(target, index, field_type=ft, location=expr.location)
+        return IRIndex(target, indices_ir, field_type=ft, location=expr.location)
 
 
 def analyze(program: A.Program, filename: Optional[str] = None) -> Tuple[IRModule, DiagnosticCollector]:
