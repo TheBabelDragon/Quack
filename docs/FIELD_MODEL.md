@@ -4,50 +4,39 @@ Everything is a Field.
 
 A scalar is a one-element Field with shape `()`.
 
-## Components
+## Rank-N shape contract
 
-| Aspect | Role |
-|--------|------|
-| Element type | `int`, `float`, or `duck` |
-| Shape | Tuple of dimensions; `()` for scalar |
-| Topology | Geometric arrangement (point, linear, …) |
-| Unit | Dimensional annotation |
-| Values | Contiguous element storage |
+| Rank | Shape example | Meaning |
+|------|---------------|---------|
+| 0 | `()` | Scalar (strict) |
+| 1 | `(N,)` | Vector / 1-D field |
+| 2 | `(R, C)` | Matrix / 2-D field |
+| N | `(D1, …, Dn)` | Higher-rank regular grid |
 
-## Scalar as field
+**Invariants**
 
-```
-x := 4
-```
+- Dimensions are positive integers; `0` or negative dimensions are rejected.
+- Total element count = product of dimensions (`()` → 1).
+- Storage is contiguous and **row-major** (last index varies fastest).
+- Shape metadata and storage length are kept consistent; divergence raises.
+- Scalar shape is strictly `()`. The one-element vector `(1,)` is distinct.
 
-semantically becomes a field with shape `()`, one value, and topology `point`.
-
-This is not a special case bolted on later — it is the default representation of every numeric literal and every index result.
-
-## Construction
+### Indexing
 
 ```
-y := field[4](1, 2, 3, 4)
+m[i, j]     # multi-index matching rank
+m[k]        # single linear index (flattened row-major) for any rank
 ```
 
-produces a rank-1 field with shape `(4,)`. The element count must match the declared size; mismatches are diagnosed at semantic analysis.
+Result is always a scalar field.
 
-## Broadcasting
+### Topology
 
-Broadcasting is always explicit:
+| Topology | Typical shape |
+|----------|---------------|
+| `point`  | `()` |
+| `linear` | `(N,)` |
+| `grid2d` | `(R, C)` |
+| `grid3d` | `(D1, D2, D3)` |
 
-```
-z := broadcast(x, 4)
-```
-
-The resulting shape is recorded in the Field IR. Silent broadcasting of mismatched shapes is rejected.
-
-## Duck
-
-`duck_field(v)` produces a typed one-element field with element type `duck`.
-
-Duck is the same shared semantic concept as in MetaField: a legitimate field value, not a parser joke. It flows through AST → IR → simulator like any other field.
-
-## Topology
-
-Topology records geometric intent (point for scalars, linear for 1-D fields). In v0.1 it is carried as metadata; non-trivial geometric operations are deferred.
+Topology is logical metadata; physical storage remains contiguous row-major.
