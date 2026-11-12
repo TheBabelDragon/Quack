@@ -1,11 +1,12 @@
-"""Quack CLI: check, ir, run."""
+"""Quack CLI: check, ir, run, babelcodec."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .diagnostics import QuackError
 from .ir.printer import print_ir
@@ -75,6 +76,125 @@ def cmd_run(path: str) -> int:
     return 0
 
 
+def cmd_babelcodec_health() -> int:
+    from .integrations.babelcodec import BabelCodecClient, BabelCodecError
+
+    try:
+        client = BabelCodecClient()
+        result = client.health()
+    except BabelCodecError as e:
+        print(json.dumps({
+            "contract": "quack.babelcodec.v1",
+            "status": "unavailable",
+            "error": {"code": e.code, "message": str(e)},
+        }, indent=2))
+        return 1
+    print(json.dumps({
+        "contract": "quack.babelcodec.v1",
+        "status": "ok",
+        "health": result,
+    }, indent=2))
+    return 0
+
+
+def cmd_babelcodec_validate_field(path: str, field_name: str) -> int:
+    from .integrations.babelcodec import (
+        BabelCodecClient, BabelCodecError, field_to_feature, FieldFeatureError,
+    )
+    from .integrations.babelcodec.protocol import CONTRACT, FEATURE_VECTOR_DOMAIN
+
+    source, filename = _load(path)
+    try:
+        program = Parser.parse_source(source, filename)
+        module, diags = analyze(program, filename)
+    except QuackError as e:
+        print(e, file=sys.stderr)
+        return 1
+    for d in diags:
+        print(d, file=sys.stderr)
+    if diags.has_errors():
+        return 1
+
+    sim = Simulator()
+    env = sim.run(module)
+    if field_name not in env:
+        available = ", ".join(sorted(env.keys())) or "(none)"
+        print(f"field '{field_name}' not found after execution; available: {available}", file=sys.stderr)
+        return 1
+
+    field = env[field_name]
+    try:
+        feature = field_to_feature(
+            field,
+            feature_id=f"quack.{field_name}",
+            name=field_name,
+            provenance={"program": filename, "field": field_name},
+        )
+    except FieldFeatureError as e:
+        print(json.dumps({
+            "contract": CONTRACT,
+            "status": "rejected",
+            "field": {
+                "name": field_name,
+                "element": field.element.value,
+                "shape": list(field.shape),
+                "unit": str(getattr(field.unit, "name", field.unit)),
+            },
+            "error": {"code": "FIELD_MAPPING", "message": str(e)},
+        }, indent=2))
+        return 1
+
+    report: dict[str, Any] = {
+        "contract": CONTRACT,
+        "status": "error",
+        "field": {
+            "name": field_name,
+            "element": field.element.value,
+            "shape": list(field.shape),
+            "unit": str(getattr(field.unit, "name", field.unit)),
+            "rank": field.rank,
+            "size": field.size,
+        },
+        "feature": feature,
+    }
+
+    try:
+        client = BabelCodecClient()
+        validation = client.validate_feature_vector([feature])
+        report["validation"] = validation
+        if not validation.get("ok"):
+            report["status"] = "invalid"
+            print(json.dumps(report, indent=2))
+            return 1
+
+        canon = client.canonicalize(feature)
+        report["canonicalization"] = {
+            "serialization": canon.get("serialization"),
+            "byte_length": canon.get("byte_length"),
+            "text": canon.get("text"),
+        }
+
+        identity = client.content_hash(feature, domain=FEATURE_VECTOR_DOMAIN)
+        report["content_identity"] = {
+            "algorithm": identity.get("algorithm"),
+            "domain": identity.get("domain"),
+            "hex": identity.get("hex"),
+            "serialization": identity.get("serialization"),
+        }
+        report["status"] = "valid"
+        print(json.dumps(report, indent=2))
+        return 0
+    except BabelCodecError as e:
+        report["status"] = (
+            "unavailable"
+            if e.code.endswith("MISSING") or e.code.endswith("INVALID")
+            else "error"
+        )
+        report["error"] = {"code": e.code, "message": str(e)}
+        print(json.dumps(report, indent=2))
+        return 1
+
+
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="quack",
@@ -91,6 +211,20 @@ def main(argv: Optional[list] = None) -> int:
     p_run = sub.add_parser("run", help="execute with the simulator backend")
     p_run.add_argument("file")
 
+    p_bc = sub.add_parser(
+        "babelcodec",
+        help="optional BabelCodec Field interoperability (requires Node + BABELCODEC_ROOT)",
+    )
+    bc_sub = p_bc.add_subparsers(dest="bc_command", required=True)
+    bc_sub.add_parser("health", help="verify BabelCodec runtime and capabilities")
+
+    p_vf = bc_sub.add_parser(
+        "validate-field",
+        help="execute a Quack program and validate a named Field via BabelCodec",
+    )
+    p_vf.add_argument("file", help="Quack source file")
+    p_vf.add_argument("--field", required=True, help="Field binding name after simulation")
+
     args = parser.parse_args(argv)
     if args.command == "check":
         return cmd_check(args.file)
@@ -98,6 +232,11 @@ def main(argv: Optional[list] = None) -> int:
         return cmd_ir(args.file)
     if args.command == "run":
         return cmd_run(args.file)
+    if args.command == "babelcodec":
+        if args.bc_command == "health":
+            return cmd_babelcodec_health()
+        if args.bc_command == "validate-field":
+            return cmd_babelcodec_validate_field(args.file, args.field)
     return 1
 
 

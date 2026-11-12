@@ -1,0 +1,8 @@
+# Demonstration Field for BabelCodec interop.
+# Rank-1 INT vector with explicit values; shape and units preserved
+# through the adapter.
+
+base := field[4](10, 20, 30, 40)
+offset := broadcast(1, 4)
+result := base + offset
+print(result)
